@@ -1,30 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import FileUpload from '../components/FileUpload';
 import DocumentList from '../components/DocumentList';
 import ExtractionView from '../components/ExtractionView';
-import { documentsAPI } from '../services/api';
 
 function HomePage() {
   const [documents, setDocuments] = useState([]);
   const [selectedDocument, setSelectedDocument] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    loadDocuments();
-  }, []);
-
-  const loadDocuments = async () => {
-    try {
-      const data = await documentsAPI.list();
-      setDocuments(data);
-    } catch (err) {
-      console.error('Failed to load documents:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleUploadSuccess = (document) => {
+    // Add new document to the list
     setDocuments([document, ...documents]);
   };
 
@@ -47,7 +31,7 @@ function HomePage() {
             Document Extraction System
           </h1>
           <p className="mt-2 text-sm text-gray-600">
-            Extract data from delivery notes using OCR
+            Extract data from delivery notes (bons de livraison) using OCR
           </p>
         </div>
       </header>
@@ -63,7 +47,7 @@ function HomePage() {
           <div className="lg:col-span-2 space-y-6">
             {selectedDocument ? (
               <ExtractionView
-                documentId={selectedDocument.id}
+                document={selectedDocument}
                 onClose={() => setSelectedDocument(null)}
               />
             ) : (

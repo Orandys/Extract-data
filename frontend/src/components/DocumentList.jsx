@@ -11,7 +11,7 @@ function DocumentList({ documents, onDocumentSelect, onDocumentDeleted }) {
         }
       } catch (err) {
         console.error('Delete failed:', err);
-        alert('Failed to delete document');
+        alert('Failed to delete document: ' + (err.response?.data?.detail || err.message));
       }
     }
   };
@@ -32,13 +32,13 @@ function DocumentList({ documents, onDocumentSelect, onDocumentDeleted }) {
   return (
     <div className="bg-white rounded-lg shadow-md overflow-hidden">
       <div className="px-6 py-4 bg-gray-50 border-b">
-        <h2 className="text-xl font-semibold">Documents</h2>
+        <h2 className="text-xl font-semibold">Uploaded Documents</h2>
       </div>
 
       <div className="divide-y">
         {documents.length === 0 ? (
           <div className="px-6 py-8 text-center text-gray-500">
-            No documents uploaded yet
+            No documents uploaded yet. Upload a delivery note to get started.
           </div>
         ) : (
           documents.map((doc) => (
@@ -50,8 +50,9 @@ function DocumentList({ documents, onDocumentSelect, onDocumentDeleted }) {
                 <div className="flex-1">
                   <h3 className="font-medium text-gray-900">{doc.filename}</h3>
                   <p className="text-sm text-gray-500">
-                    Uploaded: {new Date(doc.upload_date).toLocaleString()}
+                    Uploaded: {new Date(doc.uploaded_at).toLocaleString()}
                   </p>
+                  <p className="text-xs text-gray-400 mt-1">ID: {doc.id}</p>
                 </div>
 
                 <div className="flex items-center space-x-2">

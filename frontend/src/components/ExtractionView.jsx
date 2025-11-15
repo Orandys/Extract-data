@@ -1,25 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { extractionAPI } from '../services/api';
+import { extractionAPI, correctionsAPI } from '../services/api';
 
-function ExtractionView({ documentId, onClose }) {
+function ExtractionView({ document, onClose }) {
   const [extractions, setExtractions] = useState([]);
-  const [selectedExtraction, setSelectedExtraction] = useState(null);
-  const [editing, setEditing] = useState(false);
-  const [editData, setEditData] = useState({});
+  const [editedValues, setEditedValues] = useState({});
   const [processing, setProcessing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    loadExtractions();
-  }, [documentId]);
+    if (document) {
+      loadExtractions();
+    }
+  }, [document]);
 
   const loadExtractions = async () => {
+    setLoading(true);
     try {
-      const data = await extractionAPI.getByDocument(documentId);
-      setExtractions(data);
-      if (data.length > 0) {
-        setSelectedExtraction(data[0]);
-        setEditData(data[0]);
+      // Check if document has extractions already
+      if (document.extractions && document.extractions.length > 0) {
+        setExtractions(document.extractions);
+        initializeEditedValues(document.extractions);
+      } else {
+        setExtractions([]);
       }
     } catch (err) {
       console.error('Failed to load extractions:', err);
@@ -28,13 +31,20 @@ function ExtractionView({ documentId, onClose }) {
     }
   };
 
+  const initializeEditedValues = (extractions) => {
+    const values = {};
+    extractions.forEach(ext => {
+      values[ext.field_name] = ext.extracted_value || '';
+    });
+    setEditedValues(values);
+  };
+
   const handleProcess = async (engine = 'tesseract') => {
     setProcessing(true);
     try {
-      const result = await extractionAPI.process(documentId, engine);
-      setExtractions([result, ...extractions]);
-      setSelectedExtraction(result);
-      setEditData(result);
+      const result = await extractionAPI.process(document.id, engine);
+      setExtractions(result);
+      initializeEditedValues(result);
     } catch (err) {
       alert('Processing failed: ' + (err.response?.data?.detail || err.message));
     } finally {
@@ -42,24 +52,57 @@ function ExtractionView({ documentId, onClose }) {
     }
   };
 
-  const handleSave = async () => {
+  const handleFieldChange = (fieldName, value) => {
+    setEditedValues({
+      ...editedValues,
+      [fieldName]: value
+    });
+  };
+
+  const handleSaveCorrections = async () => {
+    setSaving(true);
     try {
-      const updated = await extractionAPI.update(selectedExtraction.id, {
-        ...editData,
-        validated: 1,
-      });
-      setSelectedExtraction(updated);
-      setEditing(false);
+      // Save corrections for each modified field
+      const corrections = [];
+      for (const extraction of extractions) {
+        const originalValue = extraction.extracted_value || '';
+        const correctedValue = editedValues[extraction.field_name] || '';
+        
+        if (originalValue !== correctedValue) {
+          await correctionsAPI.save({
+            extraction_id: extraction.id,
+            original_value: originalValue,
+            corrected_value: correctedValue,
+            bbox: extraction.bbox // Pass along the bounding box if available
+          });
+          corrections.push(extraction.field_name);
+        }
+      }
       
-      // Refresh extractions
-      loadExtractions();
+      if (corrections.length > 0) {
+        alert(`Saved corrections for: ${corrections.join(', ')}`);
+        // Reload to get updated data
+        await loadExtractions();
+      } else {
+        alert('No changes to save');
+      }
     } catch (err) {
       alert('Save failed: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleFieldChange = (field, value) => {
-    setEditData({ ...editData, [field]: value });
+  const getFieldLabel = (fieldName) => {
+    const labels = {
+      'numero_bon': 'Numéro de Bon',
+      'date': 'Date',
+      'client': 'Client',
+      'adresse': 'Adresse',
+      'transporteur': 'Transporteur',
+      'articles': 'Articles'
+    };
+    return labels[fieldName] || fieldName;
   };
 
   if (loading) {
@@ -73,7 +116,10 @@ function ExtractionView({ documentId, onClose }) {
   return (
     <div className="bg-white rounded-lg shadow-md overflow-hidden">
       <div className="px-6 py-4 bg-gray-50 border-b flex justify-between items-center">
-        <h2 className="text-xl font-semibold">Document Extraction</h2>
+        <div>
+          <h2 className="text-xl font-semibold">Document: {document.filename}</h2>
+          <p className="text-sm text-gray-600">Status: {document.status}</p>
+        </div>
         <button
           onClick={onClose}
           className="text-gray-500 hover:text-gray-700"
@@ -85,7 +131,7 @@ function ExtractionView({ documentId, onClose }) {
       <div className="p-6">
         {extractions.length === 0 ? (
           <div className="space-y-4">
-            <p className="text-gray-600">No extractions yet. Process this document?</p>
+            <p className="text-gray-600">No extractions yet. Process this document with OCR?</p>
             <div className="flex space-x-2">
               <button
                 onClick={() => handleProcess('tesseract')}
@@ -107,103 +153,50 @@ function ExtractionView({ documentId, onClose }) {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Extraction info */}
             <div className="flex justify-between items-center">
               <div className="text-sm text-gray-600">
-                <p>Engine: {selectedExtraction.ocr_engine}</p>
-                <p>Confidence: {(selectedExtraction.confidence_score * 100).toFixed(1)}%</p>
-                <p>
-                  Status:{' '}
-                  {selectedExtraction.validated ? (
-                    <span className="text-green-600 font-medium">Validated</span>
-                  ) : (
-                    <span className="text-yellow-600 font-medium">Not Validated</span>
-                  )}
-                </p>
+                <p>Total fields extracted: {extractions.length}</p>
               </div>
-
-              {!editing ? (
-                <button
-                  onClick={() => setEditing(true)}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md
-                    hover:bg-blue-700"
-                >
-                  Edit & Validate
-                </button>
-              ) : (
-                <div className="space-x-2">
-                  <button
-                    onClick={handleSave}
-                    className="px-4 py-2 bg-green-600 text-white rounded-md
-                      hover:bg-green-700"
-                  >
-                    Save
-                  </button>
-                  <button
-                    onClick={() => {
-                      setEditing(false);
-                      setEditData(selectedExtraction);
-                    }}
-                    className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md
-                      hover:bg-gray-400"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
+              <button
+                onClick={handleSaveCorrections}
+                disabled={saving}
+                className="px-4 py-2 bg-green-600 text-white rounded-md
+                  hover:bg-green-700 disabled:bg-gray-400"
+              >
+                {saving ? 'Saving...' : 'Save Corrections'}
+              </button>
             </div>
 
             {/* Extracted fields */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {[
-                { key: 'delivery_note_number', label: 'Delivery Note Number' },
-                { key: 'delivery_date', label: 'Delivery Date' },
-                { key: 'supplier_name', label: 'Supplier Name' },
-                { key: 'customer_name', label: 'Customer Name' },
-                { key: 'total_amount', label: 'Total Amount' },
-                { key: 'currency', label: 'Currency' },
-              ].map((field) => (
-                <div key={field.key}>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {field.label}
+              {extractions.map((extraction) => (
+                <div key={extraction.id} className="space-y-1">
+                  <label className="block text-sm font-medium text-gray-700">
+                    {getFieldLabel(extraction.field_name)}
                   </label>
-                  {editing ? (
-                    <input
-                      type="text"
-                      value={editData[field.key] || ''}
-                      onChange={(e) => handleFieldChange(field.key, e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md
-                        focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  ) : (
-                    <div className="px-3 py-2 bg-gray-50 rounded-md">
-                      {selectedExtraction[field.key] || '-'}
-                    </div>
-                  )}
-                </div>
-              ))}
-
-              {[
-                { key: 'supplier_address', label: 'Supplier Address' },
-                { key: 'customer_address', label: 'Customer Address' },
-              ].map((field) => (
-                <div key={field.key} className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {field.label}
-                  </label>
-                  {editing ? (
+                  {extraction.field_name === 'articles' || extraction.field_name === 'adresse' ? (
                     <textarea
-                      value={editData[field.key] || ''}
-                      onChange={(e) => handleFieldChange(field.key, e.target.value)}
+                      value={editedValues[extraction.field_name] || ''}
+                      onChange={(e) => handleFieldChange(extraction.field_name, e.target.value)}
                       rows={3}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md
                         focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder={`Enter ${getFieldLabel(extraction.field_name)}`}
                     />
                   ) : (
-                    <div className="px-3 py-2 bg-gray-50 rounded-md whitespace-pre-wrap">
-                      {selectedExtraction[field.key] || '-'}
-                    </div>
+                    <input
+                      type="text"
+                      value={editedValues[extraction.field_name] || ''}
+                      onChange={(e) => handleFieldChange(extraction.field_name, e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md
+                        focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder={`Enter ${getFieldLabel(extraction.field_name)}`}
+                    />
                   )}
+                  <div className="flex justify-between text-xs text-gray-500">
+                    <span>Confidence: {extraction.confidence ? (extraction.confidence * 100).toFixed(0) : 0}%</span>
+                    {extraction.bbox && <span>Has bbox</span>}
+                  </div>
                 </div>
               ))}
             </div>

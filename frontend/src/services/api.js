@@ -14,16 +14,11 @@ export const documentsAPI = {
   upload: async (file) => {
     const formData = new FormData();
     formData.append('file', file);
-    const response = await api.post('/api/documents/upload', formData, {
+    const response = await api.post('/api/documents', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
     });
-    return response.data;
-  },
-
-  list: async (skip = 0, limit = 100) => {
-    const response = await api.get(`/api/documents/?skip=${skip}&limit=${limit}`);
     return response.data;
   },
 
@@ -41,9 +36,11 @@ export const documentsAPI = {
 // Extraction API
 export const extractionAPI = {
   process: async (documentId, ocrEngine = 'tesseract') => {
-    const response = await api.post(`/api/extraction/process/${documentId}`, null, {
-      params: { ocr_engine: ocrEngine },
-    });
+    const response = await api.post(
+      `/api/extraction/process/${documentId}`,
+      null,
+      { params: { ocr_engine: ocrEngine } }
+    );
     return response.data;
   },
 
@@ -51,36 +48,28 @@ export const extractionAPI = {
     const response = await api.get(`/api/extraction/document/${documentId}`);
     return response.data;
   },
+};
 
-  get: async (id) => {
-    const response = await api.get(`/api/extraction/${id}`);
-    return response.data;
-  },
-
-  update: async (id, data) => {
-    const response = await api.put(`/api/extraction/${id}`, data);
+// Corrections API
+export const correctionsAPI = {
+  save: async (data) => {
+    const response = await api.post('/api/corrections', data);
     return response.data;
   },
 };
 
-// Learning API
-export const learningAPI = {
-  recordCorrection: async (data) => {
-    const response = await api.post('/api/learning/corrections', data);
+// Metrics API
+export const metricsAPI = {
+  getAll: async () => {
+    const response = await api.get('/api/metrics');
     return response.data;
   },
+};
 
-  getCorrections: async (fieldName, limit = 10) => {
-    const response = await api.get(`/api/learning/corrections/${fieldName}`, {
-      params: { limit },
-    });
-    return response.data;
-  },
-
-  getStats: async () => {
-    const response = await api.get('/api/learning/stats');
-    return response.data;
-  },
+// Health check
+export const healthCheck = async () => {
+  const response = await api.get('/api/health');
+  return response.data;
 };
 
 export default api;
