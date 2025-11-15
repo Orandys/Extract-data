@@ -1,11 +1,10 @@
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Optional, List
 from datetime import datetime
 
 
 class DocumentBase(BaseModel):
     filename: str
-    document_type: Optional[str] = "delivery_note"
 
 
 class DocumentCreate(DocumentBase):
@@ -13,8 +12,8 @@ class DocumentCreate(DocumentBase):
 
 
 class DocumentResponse(DocumentBase):
-    id: int
-    upload_date: datetime
+    id: str
+    uploaded_at: datetime
     status: str
     
     class Config:
@@ -22,64 +21,58 @@ class DocumentResponse(DocumentBase):
 
 
 class ExtractionBase(BaseModel):
-    delivery_note_number: Optional[str] = None
-    delivery_date: Optional[str] = None
-    supplier_name: Optional[str] = None
-    supplier_address: Optional[str] = None
-    customer_name: Optional[str] = None
-    customer_address: Optional[str] = None
-    total_amount: Optional[float] = None
-    currency: Optional[str] = None
+    field_name: str
+    extracted_value: Optional[str] = None
+    confidence: Optional[float] = None
+    bbox: Optional[str] = None  # JSON string
 
 
 class ExtractionCreate(ExtractionBase):
-    document_id: int
-    ocr_engine: str
-    confidence_score: Optional[float] = None
-    raw_text: Optional[str] = None
+    document_id: str
 
 
 class ExtractionResponse(ExtractionBase):
-    id: int
-    document_id: int
-    extraction_date: datetime
-    ocr_engine: str
-    confidence_score: Optional[float] = None
-    validated: int
+    id: str
+    document_id: str
     
     class Config:
         from_attributes = True
 
 
-class ExtractionUpdate(BaseModel):
-    delivery_note_number: Optional[str] = None
-    delivery_date: Optional[str] = None
-    supplier_name: Optional[str] = None
-    supplier_address: Optional[str] = None
-    customer_name: Optional[str] = None
-    customer_address: Optional[str] = None
-    total_amount: Optional[float] = None
-    currency: Optional[str] = None
-    validated: Optional[int] = None
-    corrections: Optional[str] = None
-
-
-class LearningDataCreate(BaseModel):
-    extraction_id: int
-    field_name: str
+class CorrectionBase(BaseModel):
     original_value: Optional[str] = None
     corrected_value: str
-    pattern: Optional[str] = None
+    bbox: Optional[str] = None  # JSON string
 
 
-class LearningDataResponse(BaseModel):
-    id: int
-    extraction_id: int
-    field_name: str
-    original_value: Optional[str] = None
-    corrected_value: str
+class CorrectionCreate(CorrectionBase):
+    extraction_id: str
+
+
+class CorrectionResponse(CorrectionBase):
+    id: str
+    extraction_id: str
     correction_date: datetime
-    pattern: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+
+class FieldMetricsResponse(BaseModel):
+    id: str
+    field_name: str
+    total_extractions: int
+    total_corrections: int
+    accuracy: float
+    last_updated: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class DocumentWithExtractionsResponse(DocumentResponse):
+    """Document response with all extractions"""
+    extractions: List[ExtractionResponse] = []
     
     class Config:
         from_attributes = True

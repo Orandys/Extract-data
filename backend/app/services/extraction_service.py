@@ -1,105 +1,94 @@
 import re
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Tuple
+import json
 
 
 class ExtractionService:
     """Service for extracting structured data from OCR text"""
     
     def __init__(self):
-        # Define patterns for extraction
+        # French-specific patterns for delivery notes
         self.patterns = {
-            'delivery_note_number': [
-                r'(?:bon|note|n°|num(?:ero)?|#)\s*(?:de\s*)?(?:livraison)?\s*:?\s*([A-Z0-9\-]+)',
-                r'delivery\s*note\s*(?:number|no|#)?\s*:?\s*([A-Z0-9\-]+)',
-            ],
-            'delivery_date': [
-                r'date\s*(?:de\s*livraison)?\s*:?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})',
-                r'(?:date|delivered)\s*:?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})',
-            ],
-            'supplier_name': [
-                r'(?:fournisseur|supplier|from)\s*:?\s*([A-Z][A-Za-z\s\&\.]+)',
-            ],
-            'customer_name': [
-                r'(?:client|customer|to|destinataire)\s*:?\s*([A-Z][A-Za-z\s\&\.]+)',
-            ],
-            'total_amount': [
-                r'(?:total|montant)\s*:?\s*([0-9,\.]+)',
-                r'(?:total|amount)\s*:?\s*\$?\s*([0-9,\.]+)',
-            ],
-            'currency': [
-                r'(?:total|montant)\s*:?\s*[0-9,\.]+\s*([A-Z]{3})',
-                r'\$|USD|EUR|GBP|CAD',
-            ]
+            "numero_bon": r"B[OL][:\s]*[N°#\s]*(\w+[-/]?\w+)",
+            "date": r"Date[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+            "client": r"Client[:\s]*([A-Z\s]+)",
+            "adresse": r"Adresse[:\s]*(.+?)(?=\n\n|\n[A-Z]|$)",
+            "transporteur": r"Transporteur[:\s]*(.+)",
+            "articles": r"Articles?[:\s]*(.+?)(?=\n\n|Total|$)"
         }
     
-    def extract_fields(self, text: str) -> Dict[str, Optional[str]]:
-        """Extract structured fields from text"""
-        extracted = {}
+    def extract_fields(self, text: str, bbox_data: Optional[List[Dict]] = None) -> List[Dict]:
+        """Extract structured fields from text with bounding boxes
         
-        for field, patterns in self.patterns.items():
-            value = None
-            for pattern in patterns:
-                match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
-                if match:
-                    if match.groups():
-                        value = match.group(1).strip()
-                    else:
-                        value = match.group(0).strip()
-                    break
-            extracted[field] = value
-        
-        # Extract supplier and customer addresses (multi-line)
-        extracted['supplier_address'] = self._extract_address(text, 'supplier')
-        extracted['customer_address'] = self._extract_address(text, 'customer')
-        
-        # Parse amount to float
-        if extracted.get('total_amount'):
-            try:
-                amount_str = extracted['total_amount'].replace(',', '.')
-                extracted['total_amount'] = float(amount_str)
-            except ValueError:
-                extracted['total_amount'] = None
-        
-        return extracted
-    
-    def _extract_address(self, text: str, address_type: str) -> Optional[str]:
-        """Extract address from text"""
-        # Simple heuristic: look for lines after supplier/customer name
-        keywords = {
-            'supplier': ['fournisseur', 'supplier', 'from'],
-            'customer': ['client', 'customer', 'to', 'destinataire']
-        }
-        
-        lines = text.split('\n')
-        address_lines = []
-        capture = False
-        
-        for i, line in enumerate(lines):
-            line_lower = line.lower()
+        Args:
+            text: OCR extracted text
+            bbox_data: Optional list of bounding box data from OCR
             
-            # Check if this line contains the keyword
-            if any(kw in line_lower for kw in keywords.get(address_type, [])):
-                capture = True
-                continue
-            
-            # Capture next few lines as address
-            if capture and line.strip():
-                # Stop if we hit another section
-                if any(kw in line_lower for kw in ['date', 'total', 'items', 'products', 'quantity']):
-                    break
-                address_lines.append(line.strip())
-                if len(address_lines) >= 3:  # Usually address is 2-3 lines
-                    break
+        Returns:
+            List of extraction dictionaries with field_name, extracted_value, confidence, bbox
+        """
+        extractions = []
         
-        return '\n'.join(address_lines) if address_lines else None
+        for field_name, pattern in self.patterns.items():
+            match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE | re.DOTALL)
+            
+            if match:
+                extracted_value = match.group(1).strip() if match.groups() else match.group(0).strip()
+                
+                # Try to find bounding box for this match
+                bbox = self._find_bbox_for_text(extracted_value, bbox_data) if bbox_data else None
+                
+                extractions.append({
+                    'field_name': field_name,
+                    'extracted_value': extracted_value,
+                    'confidence': 0.85,  # Default confidence, can be improved with actual OCR confidence
+                    'bbox': json.dumps(bbox) if bbox else None
+                })
+        
+        return extractions
     
-    def validate_extraction(self, extracted_data: Dict) -> Dict[str, bool]:
-        """Validate extracted data"""
+    def _find_bbox_for_text(self, text: str, bbox_data: List[Dict]) -> Optional[Dict]:
+        """Find bounding box coordinates for extracted text
+        
+        Args:
+            text: The extracted text to find bbox for
+            bbox_data: List of bbox data from OCR
+            
+        Returns:
+            Dictionary with x, y, width, height or None
+        """
+        if not bbox_data:
+            return None
+        
+        # Simple implementation: find first bbox that contains the text
+        # In production, this should be more sophisticated
+        for bbox_item in bbox_data:
+            if 'text' in bbox_item and text.lower() in bbox_item['text'].lower():
+                return {
+                    'x': bbox_item.get('x', 0),
+                    'y': bbox_item.get('y', 0),
+                    'width': bbox_item.get('width', 0),
+                    'height': bbox_item.get('height', 0)
+                }
+        
+        return None
+    
+    def validate_extraction(self, extracted_data: List[Dict]) -> Dict[str, bool]:
+        """Validate extracted data
+        
+        Args:
+            extracted_data: List of extraction dictionaries
+            
+        Returns:
+            Dictionary with validation results for required fields
+        """
         validation = {}
         
         # Check required fields
-        required_fields = ['delivery_note_number', 'delivery_date']
+        required_fields = ['numero_bon', 'date', 'client']
+        extracted_fields = {item['field_name'] for item in extracted_data if item.get('extracted_value')}
+        
         for field in required_fields:
-            validation[field] = bool(extracted_data.get(field))
+            validation[field] = field in extracted_fields
         
         return validation

@@ -3,22 +3,27 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.database import get_db
-from app.models.database import Document, Extraction
-from app.schemas.schemas import ExtractionCreate, ExtractionResponse, ExtractionUpdate
+from app.models.database import Document, Extraction, FieldMetrics
+from app.schemas.schemas import ExtractionCreate, ExtractionResponse
 from app.services.ocr_service import OCRService
 from app.services.extraction_service import ExtractionService
-from app.services.learning_service import LearningService
 
 router = APIRouter()
 
 
-@router.post("/process/{document_id}", response_model=ExtractionResponse)
+@router.post("/process/{document_id}", response_model=List[ExtractionResponse], status_code=201)
 async def process_document(
-    document_id: int,
+    document_id: str,
     ocr_engine: str = "tesseract",
     db: Session = Depends(get_db)
 ):
-    """Process a document with OCR and extraction"""
+    """Process a document with OCR and extract fields
+    
+    - Runs OCR (Tesseract or Doctr)
+    - Extracts fields using regex patterns
+    - Stores text and bounding boxes in SQLite
+    - Returns list of extractions with field_name, extracted_value, confidence, bbox
+    """
     
     # Get document
     document = db.query(Document).filter(Document.id == document_id).first()
@@ -36,34 +41,51 @@ async def process_document(
         
         # Extract structured data
         extraction_service = ExtractionService()
-        extracted_fields = extraction_service.extract_fields(ocr_result['text'])
-        
-        # Apply learning (if available)
-        learning_service = LearningService()
-        improved_fields = learning_service.apply_learned_patterns(db, extracted_fields)
-        
-        # Create extraction record
-        extraction = Extraction(
-            document_id=document_id,
-            ocr_engine=ocr_result['engine'],
-            confidence_score=ocr_result['confidence'],
-            raw_text=ocr_result['text'],
-            delivery_note_number=extracted_fields.get('delivery_note_number'),
-            delivery_date=extracted_fields.get('delivery_date'),
-            supplier_name=extracted_fields.get('supplier_name'),
-            supplier_address=extracted_fields.get('supplier_address'),
-            customer_name=extracted_fields.get('customer_name'),
-            customer_address=extracted_fields.get('customer_address'),
-            total_amount=extracted_fields.get('total_amount'),
-            currency=extracted_fields.get('currency'),
+        extracted_fields = extraction_service.extract_fields(
+            ocr_result['text'], 
+            bbox_data=ocr_result.get('bbox_data')
         )
         
-        db.add(extraction)
+        # Save extractions to database
+        extractions = []
+        for field_data in extracted_fields:
+            extraction = Extraction(
+                document_id=document_id,
+                field_name=field_data['field_name'],
+                extracted_value=field_data['extracted_value'],
+                confidence=field_data['confidence'],
+                bbox=field_data['bbox']
+            )
+            db.add(extraction)
+            extractions.append(extraction)
+            
+            # Update field metrics
+            metrics = db.query(FieldMetrics).filter(
+                FieldMetrics.field_name == field_data['field_name']
+            ).first()
+            
+            if not metrics:
+                metrics = FieldMetrics(
+                    field_name=field_data['field_name'],
+                    total_extractions=1,
+                    total_corrections=0,
+                    accuracy=100.0
+                )
+                db.add(metrics)
+            else:
+                metrics.total_extractions += 1
+                # Recalculate accuracy
+                if metrics.total_extractions > 0:
+                    metrics.accuracy = ((metrics.total_extractions - metrics.total_corrections) / metrics.total_extractions) * 100
+        
         document.status = "completed"
         db.commit()
-        db.refresh(extraction)
         
-        return extraction
+        # Refresh all extractions to get IDs
+        for extraction in extractions:
+            db.refresh(extraction)
+        
+        return extractions
         
     except Exception as e:
         document.status = "failed"
@@ -73,7 +95,7 @@ async def process_document(
 
 @router.get("/document/{document_id}", response_model=List[ExtractionResponse])
 async def get_document_extractions(
-    document_id: int,
+    document_id: str,
     db: Session = Depends(get_db)
 ):
     """Get all extractions for a document"""
@@ -82,50 +104,3 @@ async def get_document_extractions(
     ).all()
     return extractions
 
-
-@router.get("/{extraction_id}", response_model=ExtractionResponse)
-async def get_extraction(
-    extraction_id: int,
-    db: Session = Depends(get_db)
-):
-    """Get a specific extraction"""
-    extraction = db.query(Extraction).filter(Extraction.id == extraction_id).first()
-    if not extraction:
-        raise HTTPException(status_code=404, detail="Extraction not found")
-    return extraction
-
-
-@router.put("/{extraction_id}", response_model=ExtractionResponse)
-async def update_extraction(
-    extraction_id: int,
-    update_data: ExtractionUpdate,
-    db: Session = Depends(get_db)
-):
-    """Update an extraction (for corrections)"""
-    extraction = db.query(Extraction).filter(Extraction.id == extraction_id).first()
-    if not extraction:
-        raise HTTPException(status_code=404, detail="Extraction not found")
-    
-    # Track corrections for learning
-    learning_service = LearningService()
-    
-    # Update fields and record corrections
-    update_dict = update_data.dict(exclude_unset=True)
-    for field, value in update_dict.items():
-        if value is not None and hasattr(extraction, field):
-            old_value = getattr(extraction, field)
-            if old_value != value and field not in ['validated', 'corrections']:
-                # Record the correction for learning
-                learning_service.record_correction(
-                    db=db,
-                    extraction_id=extraction_id,
-                    field_name=field,
-                    original_value=str(old_value) if old_value else "",
-                    corrected_value=str(value)
-                )
-            setattr(extraction, field, value)
-    
-    db.commit()
-    db.refresh(extraction)
-    
-    return extraction
